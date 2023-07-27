@@ -6,5 +6,6 @@ Testing integration for a Teensy 4.0/4.1 board with REYAX RYLR896 radio module w
 2. Edit the program.sh file to match your desired board
 3. Run the program.sh script by tying the following command on your terminal `./program.sh`
 
-NOTE: YOu might have to give the program.sh script execution permission by typing the following command on your terminal 
+NOTE: You might have to give the program.sh script execution permission by typing the following command on your terminal 
+
 `chmod +x program.sh`
