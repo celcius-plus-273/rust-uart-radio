@@ -9,7 +9,5 @@ Testing integration for a Teensy 4.0/4.1 board with REYAX RYLR896 radio module w
 NOTE: You might have to give the program.sh script execution permission by typing the following command on your terminal 
 
 ```
-{
 chmod +x program.sh
-}
 ```
