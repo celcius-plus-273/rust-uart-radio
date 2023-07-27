@@ -1,0 +1,51 @@
+[package]
+name = "uart-radio"
+version = "0.1.0"
+authors = ["kei_h"]
+edition = "2021"
+
+[dependencies]
+# cortex-m is a common low level hal crate that allows access to
+# cortex processor related resources
+cortex-m = "0.7"
+
+# embedded hal crate implements common embedded traits that are
+# often used by most drivers
+embedded-hal = "0.2"
+
+# log crate allows us to send text to the serial port and printing
+# it via the usb with the usb logging feature of the teensy4-bsp
+# 
+# use a serial communication program that connects to your PCs
+# serial port to access this prints
+#
+# e.g. minicom, screen, puTTY, etc.
+#
+# teensy's usb port name can be found in the /dev directory as
+# ttyACMx or tty.usbmodemx (Linux or MacOS, respectively), and
+# as COM PORTX (Windows)
+#
+# Example ussage with minicom (type the following in the terminal):
+# minicom -D /dev/ttyACM0
+log = "0.4"
+
+[dependencies.teensy4-bsp]
+version = "0.4"
+features = [
+    # Use the BSP's runtime. This lets you write your
+    # `main()` function.
+    "rt",
+    "usb-logging",
+]
+
+# implements the panic! feature for embedded teensy and the "log"
+# feature connects to usb logging allowing to print panic debug
+# messages to the serial port
+[dependencies.teensy4-panic]
+version = "0.2"
+features = ["log"]
+
+# Don't optimize build dependencies, like proc macros.
+# Helps with build times.
+[profile.release.build-override]
+opt-level = 0
