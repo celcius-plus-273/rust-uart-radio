@@ -1,136 +1,242 @@
-//! The starter code slowly blinks the LED, sets up
-//! USB logging, and creates a UART driver using pins
-//! 14 and 15. The UART baud rate is [`UART_BAUD`].
-//!
-//! Despite targeting the Teensy 4.0, this starter code
-//! also works on the Teensy 4.1.
+// TODO: add description for file
 
 #![no_std]
 #![no_main]
 
-use bsp::board;
-use teensy4_bsp as bsp;
 use teensy4_panic as _;
-
-use bsp::hal::timer::Blocking;
-use bsp::hal::lpuart::{self, Status};
-
-use core::fmt::Write as _;
-
-/// CHANGE ME to vary the baud rate.
-const UART_BAUD: u32 = 115200;
-/// Milliseconds to delay before toggling the LED
-/// and writing text outputs.
-const DELAY_MS: u32 = 100;
-
-#[bsp::rt::entry]
-fn main() -> ! {
-    // These are peripheral instances. Let the board configure these for us.
-    // This function can only be called once!
-    let instances = board::instances();
-
-    // Driver resources that are configured by the board. For more information,
-    // see the `board` documentation.
-    let board::Resources {
-        // `pins` has objects that represent the physical pins. The object
-        // for pin 13 is `p13`.
-        pins,
-        // This is a hardware timer. We'll use it for blocking delays.
-        mut gpt1,
-        // These are low-level USB resources. We'll pass these to a function
-        // that sets up USB logging.
-        usb,
-        // This is the GPIO2 port. We need this to configure the LED as a
-        // GPIO output.
-        mut gpio2,
-        // This resource is for the UART we're creating.
-        lpuart2,
-        ..
-    } = board::t40(instances);
-
-    // When this returns, you can use the `log` crate to write text
-    // over USB. Use either `screen` (macOS, Linux) or PuTTY (Windows)
-    // to visualize the messages from this example.
-    bsp::LoggingFrontend::default_log().register_usb(usb);
-
-    // This configures the LED as a GPIO output.
-    //let led = board::led(&mut gpio2, pins.p13);
-    let led = gpio2.output(pins.p13);
-
-    // Configures the GPT1 timer to run at GPT1_FREQUENCY. See the
-    // constants below for more information.
-    gpt1.disable();
-    gpt1.set_divider(GPT1_DIVIDER);
-    gpt1.set_clock_source(GPT1_CLOCK_SOURCE);
-
-    // Convenience for blocking delays.
-    let mut delay = Blocking::<_, GPT1_FREQUENCY>::from_gpt(gpt1);
-
-    // Create the UART driver using pins 14 and 15.
-    // Cast it to a embedded_hal trait object so we can
-    // use it with the write! macro.
-    let mut lpuart2: board::Lpuart2 = board::lpuart(lpuart2, pins.p14, pins.p15, UART_BAUD);
-    lpuart2.disable(|lpuart2| {
-        //lpuart2.enable_fifo(lpuart::Watermark::tx(8));
-        lpuart2.disable_fifo(lpuart::Direction::Tx);
-    });
-
-    let word = "+RECV=0,8,COMMANDS,-54,40";
-
-    let mut buffer: [u8;256] = [0;256];
-    let mut index: usize = 0;
-
-    let mut word_size = 0;
-    for (i,c) in word.chars().enumerate() {
-        buffer[i] = c as u8;
-        word_size += 1;
-    }    
-
-
-
-    loop {
-        // turn on LED
-        led.set();
-        
-        // check write buffer status
-        while !(lpuart2.status().contains(Status::TRANSMIT_EMPTY)) {
-            // just loop until transmit data register is empty
-            //log::info!("I'm actually waiting lol");
-        }
-
-        // write a byte to the uart serial port
-        lpuart2.write_byte(buffer[index]);
-        
-        // write char to the log
-        log::info!("sending {}...", buffer[index] as char);
-
-        // long wait if wend of word
-        if index == (word_size - 1) {
-            log::info!("size is: {:?}", word_size);
-            log::info!("{} was sent!", word);
-            delay.block_ms(100 * DELAY_MS);
-        }
-
-        // led blinks super fast if ongoing write 
-        // stays on if on long wait
-        led.toggle();
-
-        // increment word buffer index
-        // wraps when it reaches buffer size
-        index = (index + 1) % word_size;
-    }
+pub enum STATE {
+    FIRST,
+    SECOND,
+    THIRD,
+    FOURTH,
 }
 
-// We're responsible for configuring our timers.
-// This example uses PERCLK_CLK as the GPT1 clock source,
-// and it configures a 1 KHz GPT1 frequency by computing a
-// GPT1 divider.
-use bsp::hal::gpt::ClockSource;
+#[rtic::app(device = teensy4_bsp, peripherals = true, dispatchers = [GPT1, GPT2])]
+mod app {
+    use bsp::board;
+    use bsp::hal::lpuart::{self, Status};
+    use teensy4_bsp as bsp;
+    use crate::STATE;
+    // use rtic_sync::{make_channel, channel::*};
 
-/// The intended GPT1 frequency (Hz).
-const GPT1_FREQUENCY: u32 = 1_000;
-/// Given this clock source...
-const GPT1_CLOCK_SOURCE: ClockSource = ClockSource::HighFrequencyReferenceClock;
-/// ... the root clock is PERCLK_CLK. To configure a GPT1 frequency,
-/// we need a divider of...
-const GPT1_DIVIDER: u32 = board::PERCLK_FREQUENCY / GPT1_FREQUENCY;
+    // crates used for delay
+    // use rtic_monotonics::systick::*;
+    // TODO: MIGRATE TO RTIC v2.0.0
+
+    // systick monotonic sets up clock for delayed spawn calls
+    use systick_monotonic::{fugit::Duration, Systick};
+
+    const EXPECTED_COMMAND_SIZE: usize = 25;
+    const ARRAY_SIZE: usize = 64;
+
+    // indicates size of the channel
+    // const CHANNEL_SIZE: usize = 4;
+
+    #[local]
+    struct Local {
+        led: board::Led,
+        // used by the parse task
+        output: [u8;ARRAY_SIZE],
+        state: STATE,
+    }
+
+    #[shared]
+    struct Shared {
+        buffer: [u8;ARRAY_SIZE],
+        index: usize,
+        lpuart2: board::Lpuart2,
+    }
+
+    // define monotonic timer block
+    #[monotonic(binds = SysTick, default = true)]
+    type MonoTimer = Systick<1000>;
+
+    #[init]
+    fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
+        let board::Resources {
+            pins,
+            lpuart2,
+            mut gpio2,
+            usb,
+            ..
+        } = board::t40(cx.device);
+        let led = board::led(&mut gpio2, pins.p13);
+
+
+        bsp::LoggingFrontend::default_log().register_usb(usb);
+
+        let mut lpuart2: board::Lpuart2 = board::lpuart(lpuart2, pins.p14, pins.p15, 115200);
+        lpuart2.disable(|lpuart2| {
+            lpuart2.disable_fifo(lpuart::Direction::Tx);
+            lpuart2.disable_fifo(lpuart::Direction::Rx);
+            lpuart2.set_interrupts(lpuart::Interrupts::RECEIVE_FULL);
+            lpuart2.set_parity(None);
+        });
+
+        let buffer = [0;ARRAY_SIZE];
+        let output = [0;ARRAY_SIZE];
+        let index = 0;
+
+        // TESTING CHANNEL MESSAGING BETWEEN ASYNC TASKS
+        // let (tx,rx) = make_channel!(u8, CHANNEL_SIZE);   
+
+        // systick monotonic
+        let mono = Systick::new(cx.core.SYST, 36_000_000);
+
+        // call blink to test spawn_after
+        blink::spawn_after(Duration::<u64, 1, 1000>::from_ticks(10_000)).unwrap();
+
+        // setup state enum :)
+        let state = STATE::FIRST;
+
+        // send a message to the radio!
+        sequence_call::spawn_after(Duration::<u64, 1, 1000>::from_ticks(30_000)).unwrap(); 
+        
+        (Shared { buffer, index, lpuart2 }, Local { state, led, output }, init::Monotonics(mono))
+    }
+
+    #[idle]
+    fn idle(_cx: idle::Context) -> ! { 
+        loop {
+            // what exactly happens here? Does it skip? Does it block? Does it turn MCU to sleep mode?
+            // according to online sources:
+            //      WFI(): wait for interrupt
+            //      halts execution, puts the core into low power mode, and waits for interrupts
+            cortex_m::asm::wfi();
+        }
+    }
+
+    // create a hardware interrupt task
+    #[task(binds = LPUART2, priority = 3, shared = [buffer, index, lpuart2])]
+    fn lpuart2_interrupt(cx: lpuart2_interrupt::Context) {
+        let lpuart2 = cx.shared.lpuart2;
+        let buffer = cx.shared.buffer;
+        let index = cx.shared.index;
+
+        // lock shared structs!
+        (buffer, index, lpuart2).lock(|buffer, index, lpuart2| {
+            // read the byte currently in the data register
+            // return type of read_data is ReadData(u32)
+            let data = lpuart2.read_data();
+
+            // print whatever you receive
+            log::info!("{}", u8::from(data) as char);
+
+            // extract data byte from ReadData and store byte into buffer   
+            //buffer[*index] = u8::from(data);
+
+            // increment index
+            //*index += 1;
+                        
+            // checks if we have received the EXPECTED COMMAND_SIZE
+            if *index == EXPECTED_COMMAND_SIZE {
+                parse_message::spawn().unwrap();
+            }
+        });
+    }
+
+    #[task(shared = [buffer, index], local = [output], priority = 1)]
+    fn parse_message(cx: parse_message::Context) {
+
+        // TODO: add actual parsing and execute different actions based on command
+        let buffer = cx.shared.buffer;
+        let output = cx.local.output;
+        let index = cx.shared.index;
+
+        // acquire a lock for the shared buffer
+        (index, buffer).lock(|index, buffer| {
+            // copy the message from buffer!
+            for i in 0..ARRAY_SIZE {
+                // break early if we reach a "null" value
+                // 0x0 is regarded as null in UTF-8 encoding
+                if buffer[i] == 0 {
+                    break;
+                }
+
+                // copy the data
+                output[i] = buffer[i];
+                buffer[i] = 0;
+            }
+
+            // reset index
+            *index = 0;
+        });
+
+        // write output into the log
+        for letter in output {
+            
+            if (*letter) == 0 {
+                break;
+            }
+
+            log::info!("{}", *letter as char);
+        }
+    }
+
+    #[task(shared = [lpuart2])]
+    fn talk_to_radio(cx: talk_to_radio::Context, word: &'static str) {
+        // take lpuart from shared context
+        let mut lpuart2 = cx.shared.lpuart2;
+
+        // CONVERT MESSAGE INTO ARRAY OF CHARS
+        let mut message: [u8;64] = [0;64];
+        for (i,c) in word.chars().enumerate() {
+            message[i] = c as u8;        
+            //log::info!("{:#x}", c as u8);
+        }
+        
+
+        log::info!("Sending...");
+        // SEND IT VIA UART
+        lpuart2.lock(|lpuart2| {
+            for character in message {
+
+                // exit early to avoid sending 0x0
+                if character == 0x0 {
+                    break;
+                }
+
+                // wait for transmit register to be ready
+                while !(lpuart2.status().contains(Status::TRANSMIT_EMPTY)) {/*wait for it to be ready*/}
+                
+                // send via transmit command
+                lpuart2.write_byte(character);
+            }
+        });
+
+        log::info!("Succesfully sent: {}", word);
+    }
+
+    #[task(local = [led])]
+    fn blink(cx: blink::Context) {
+        let led = cx.local.led;
+        led.toggle();
+        blink::spawn_after(Duration::<u64, 1, 1000>::from_ticks(10_000)).unwrap();
+    }
+
+    #[task(local = [state])]
+    fn sequence_call(cx: sequence_call::Context) {
+        let state = cx.local.state;
+        let delay = Duration::<u64, 1, 1000>::from_ticks(80_000);
+        match state {
+            STATE::FIRST => {
+                talk_to_radio::spawn("AT+NETWORKID=2\r\n").unwrap();
+                *state = STATE::SECOND;
+            }
+            STATE::SECOND => {
+                talk_to_radio::spawn("AT+ADDRESS=1\r\n").unwrap();
+                *state = STATE::THIRD;
+            }
+            STATE::THIRD => {
+                talk_to_radio::spawn("AT+PARAMETER=8,7,4,7\r\n").unwrap();
+                *state = STATE::FOURTH;
+            }
+            STATE::FOURTH => {
+                talk_to_radio::spawn("AT+SEND=2,5,HELLO\r\n").unwrap();
+            }
+        }
+
+        sequence_call::spawn_after(delay).unwrap();        
+    }
+
+}

@@ -517,6 +517,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "systick-monotonic"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67fb822d5c615a0ae3a4795ee5b1d06381c7faf488d861c0a4fa8e6a88d5ff84"
+dependencies = [
+ "cortex-m",
+ "fugit",
+ "rtic-monotonic",
+]
+
+[[package]]
 name = "teensy4-bsp"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -587,6 +598,7 @@ dependencies = [
  "embedded-hal",
  "log",
  "rtic-sync",
+ "systick-monotonic",
  "teensy4-bsp",
  "teensy4-panic",
 ]

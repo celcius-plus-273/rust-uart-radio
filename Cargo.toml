@@ -31,6 +31,11 @@ log = "0.4"
 
 cortex-m-rtic = "1.1.4"
 rtic-sync = "1.0.1"
+systick-monotonic = "1.0.1"
+
+#[dependencies.rtic-monotonics]
+#version = "1.0.0"
+#features = ["cortex-m-systick"]
 
 [dependencies.teensy4-bsp]
 version = "0.4"
