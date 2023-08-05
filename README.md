@@ -13,3 +13,8 @@ NOTE: You might have to give the program.sh script execution permission by typin
 ```
 chmod +x program.sh
 ```
+
+## Todo
+
+1. Implement runner.rs file to integrate the cargo run command with building and flashing
+2. Benchmark performace and reliability of radio over a set of extensive tests
